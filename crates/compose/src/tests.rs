@@ -5247,6 +5247,112 @@ fn mojikumi_kinsoku_push_in_and_push_out_select_different_legal_breaks() {
     }
 }
 
+/// A paragraph that can compress: the Mojikumi table gives its ideographs shrinkable space, so
+/// a line ending before a 禁則 boundary can be pulled in (追い込み) or pushed out (追い出し).
+fn kinsoku_push_pull_doc(kind: Option<&str>) -> (Document, StoryId) {
+    use designcraft_doc::cjk::{MojikumiAki, MojikumiTable};
+    let (mut d, sid, _) = doc_with(
+        "甲乙丙丁戊己庚辛",
+        Rect::new(0.0, 0.0, 45.0, 300.0),
+        ParaAttrs {
+            composer: Some(Composer::SingleLine),
+            mojikumi: Some("MojikumiTable/Compress".into()),
+            kinsoku_type: kind.map(str::to_string),
+            ..Default::default()
+        },
+    );
+    Arc::make_mut(&mut d.styles).mojikumi_tables.push(MojikumiTable {
+        name: "Compress".into(),
+        based_on: "SimpChineseDefault".into(),
+        overrides: vec![MojikumiAki {
+            target_class: 12,
+            side_class: 12,
+            after: true,
+            minimum: 0.0,
+            desired: 1.0,
+            maximum: 2.0,
+            priority: 1,
+            ..Default::default()
+        }],
+    });
+    (d, sid)
+}
+
+fn first_line_end(cs: &ComposedStory) -> (usize, f64) {
+    let line = all_lines(cs)[0];
+    (line.range.end, line.end_x)
+}
+
+#[test]
+fn default_kinsoku_type_composes_as_push_in_first() {
+    // The empty value is InDesign's default (and what the UI's "Push In First" stores): it must
+    // behave as push-in-first, not as the minimum-adjustment mode.
+    let (d, sid) = kinsoku_push_pull_doc(None);
+    let default = compose_story(&d, sid, &ComposeOptions::default());
+    let (d, sid) = kinsoku_push_pull_doc(Some("KinsokuPushInFirst"));
+    let push_in = compose_story(&d, sid, &ComposeOptions::default());
+    let (d, sid) = kinsoku_push_pull_doc(Some("KinsokuPushOutFirst"));
+    let push_out = compose_story(&d, sid, &ComposeOptions::default());
+    assert_eq!(first_line_end(&default).0, first_line_end(&push_in).0);
+    assert!(first_line_end(&default).0 > first_line_end(&push_out).0, "{:?} vs {:?}", first_line_end(&default), first_line_end(&push_out));
+}
+
+#[test]
+fn push_out_only_leaves_the_line_end_uncompressed() {
+    // Push-out-only turns the 追い込み compression off: the line cannot be squeezed to reach a
+    // break, so it ends earlier (and never past the measure).
+    let (d, sid) = kinsoku_push_pull_doc(None);
+    let push_in = compose_story(&d, sid, &ComposeOptions::default());
+    let (d, sid) = kinsoku_push_pull_doc(Some("KinsokuPushOutOnly"));
+    let push_out_only = compose_story(&d, sid, &ComposeOptions::default());
+    assert!(first_line_end(&push_out_only).0 <= first_line_end(&push_in).0);
+    for cs in [&push_in, &push_out_only] {
+        for line in all_lines(cs) {
+            assert!(line.end_x <= line.x1 + 0.01, "line end {} past the measure {}", line.end_x, line.x1);
+        }
+    }
+    // Push-out-only's first line is not compressed to the measure: it ends short of it.
+    let (_, short) = first_line_end(&push_out_only);
+    let line = all_lines(&push_out_only)[0];
+    assert!(line.x1 - short > 0.5, "no compression: end {short} vs measure {}", line.x1);
+}
+
+#[test]
+fn kinsoku_priority_modes_map_to_breaker_policies() {
+    let mut pp = ParaProps::default();
+    for (kind, priority) in [
+        ("", 1u8),
+        ("KinsokuPushInFirst", 1),
+        ("KinsokuPushOutFirst", 2),
+        ("KinsokuPushOutOnly", 3),
+        ("KinsokuPrioritizeAdjustmentAmount", 0),
+        ("KinsokuSomethingElse", 0),
+    ] {
+        pp.kinsoku_type = kind.to_string();
+        let sp = spacing_for(&pp, 12.0, true);
+        assert_eq!(sp.kinsoku_priority, priority, "{kind}");
+        assert!(sp.kinsoku_cjk, "{kind}");
+        assert!(!spacing_for(&pp, 12.0, false).kinsoku_cjk, "{kind}: Latin text is not biased");
+    }
+}
+
+#[test]
+fn latin_paragraphs_are_not_biased_by_the_kinsoku_priority() {
+    // A justified Latin paragraph composes the same with push-in-first, push-out-first and
+    // minimum adjustment: the policy is about CJK 禁則, and a Latin paragraph has none.
+    let compose_with = |kind: &str| {
+        let (mut d, sid, _) =
+            doc_with(LOREM, Rect::new(0.0, 0.0, 200.0, 500.0), ParaAttrs { align: Some(Align::FullyJustified), ..Default::default() });
+        d.story_mut(sid).unwrap().paras[0].para.kinsoku_type = Some(kind.to_string());
+        compose_story(&d, sid, &ComposeOptions::default())
+    };
+    let ends = |cs: &ComposedStory| all_lines(cs).iter().map(|l| l.range.end).collect::<Vec<_>>();
+    let push_in = ends(&compose_with(""));
+    assert_eq!(ends(&compose_with("KinsokuPushInFirst")), push_in);
+    assert_eq!(ends(&compose_with("KinsokuPushOutFirst")), push_in);
+    assert_eq!(ends(&compose_with("KinsokuPrioritizeAdjustmentAmount")), push_in);
+}
+
 #[test]
 fn mojikumi_priority_and_elastic_line_start_are_used_in_placement() {
     use designcraft_doc::cjk::{MojikumiAki, MojikumiTable};
