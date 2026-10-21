@@ -1,6 +1,6 @@
 # DesignCraft parity with Adobe InDesign
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-21 · **Change:** minor (File ▸ New has Japanese print page-size presets: 文庫, 新書, 四六判, 菊判, AB判, ハガキ, 往復ハガキ, B6 (JIS) and 名刺; previously minor: File ▸ Open Recent; .indd and .indt open through indd-utils; text threads by hand; image clipping paths from IDML; anchored objects wrap text; Tabs panel listed as present (#343); spring-loaded Zoom navigation; recovery checkpoint retention; cancelable macOS Dock Quit; Based on Parent; object styles carry effects; colour management on craft-cms, Coated FOGRA39 default CMYK; swatches on placed greyscale and bitmap images) · **Target:** Adobe InDesign 2026 (21.6.0.57, macOS)
 
 The authoritative assessment of how close DesignCraft is to Adobe InDesign. [ROADMAP.md](../ROADMAP.md)
 summarizes it; [gaps.md](gaps.md) lists every known shortfall one at a time; the feature-by-feature
@@ -142,7 +142,7 @@ features), exchange edge cases, and everything excluded above.
 
 | Core feature | Weight | Depth | Evidence |
 |---|---|---|---|
-| Launch, welcome screen, new document from a preset | 10% | 80% | presets incl. A6 (#248) |
+| Launch, welcome screen, new document from a preset | 10% | 80% | presets incl. A6 (#248) and the Japanese print sizes (文庫, 新書, 四六判, 菊判, AB判, ハガキ, 往復ハガキ, B6, 名刺) |
 | Type text in a frame, select and edit it | 15% | 65% | caret formatting (#289), double-click selection in fields (#189) |
 | Font, size, colour, alignment | 15% | 65% | installed fonts not always found (#161, #110, #107) |
 | Place an image and fit it | 10% | 75% | place gun, fitting |
@@ -462,6 +462,7 @@ Task notes that headed ROADMAP.md:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | Japanese print page-size presets in New Document, the start screen, Document Setup, `file.new` and `layout.pageSize` (文庫, 新書, 四六判, 菊判, AB判, ハガキ, 往復ハガキ, B6 (JIS), 名刺); readiness unchanged |
 | 2026-10-13 | minor | `.indd` and `.indt` open through storytold/indd-utils; INDD remaining work 10–30 h (real-file corpus); readiness unchanged until it is measured |
 | 2026-10-12 | minor | Text threads by hand; stage note and distance to alpha follow the gate (5–7 h, #165); percentages unchanged |
 | 2026-10-11 | minor | Spring-loaded Zoom navigation added to the working feature inventory (DC-1); readiness estimates unchanged |
