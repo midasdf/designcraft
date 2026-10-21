@@ -798,6 +798,9 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         .zip(&cols)
         .map(|(f, columns)| FrameText { frame: f.id, vertical: f.vertical, columns: columns.clone(), ..Default::default() })
         .collect();
+    // Ruby Adjusts Leading below the last placed line, for the gap to the next line: its frame and
+    // column, and the room needed; an entry for another column never matches.
+    let mut ruby_below_carry: Option<(usize, usize, f64)> = None;
     let mut cur = Cursor {
         fi: 0,
         col: 0,
@@ -1400,7 +1403,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             // A shaped frame's slots change from line to line, so they are estimated with the
             // band the lines are placed with (or a taller one, so no line outgrows its slot).
             let (est_asc, est_band) = if f.outline.is_some() {
-                let (a, _, d, _) = line_metrics(&[], &glyphs, g0, mark_leading, mark_chars.size, db, &mark_chars);
+                let (a, _, d, _, _) = line_metrics(&[], &glyphs, g0, mark_leading, mark_chars.size, db, &mark_chars, &styles_tab, f.vertical);
                 (a, (a.max(base_chars.size * 0.8), d.max(base_chars.size * 0.25)))
             } else {
                 (base_chars.size * 0.75, (base_chars.size * 0.8, 0.0))
@@ -1454,11 +1457,15 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             for (k, b) in breaks.iter().enumerate() {
                 let (s, e) = (g0 + b.start, g0 + b.end);
                 let line_glyphs = &glyphs[s..e.max(s)];
-                let (asc, tops, desc, lead) = line_metrics(line_glyphs, &glyphs, s, mark_leading, mark_chars.size, db, &mark_chars);
+                let (asc, tops, desc, lead, below_grow) =
+                    line_metrics(line_glyphs, &glyphs, s, mark_leading, mark_chars.size, db, &mark_chars, &styles_tab, f.vertical);
                 let lead = match last_line_mark {
                     Some(m) if k + 1 == breaks.len() => lead.max(m),
                     _ => lead,
                 };
+                // Ruby set below the previous line takes its room from the gap to this line.
+                let below = ruby_below_carry.filter(|(fi, col, _)| *fi == cur.fi && *col == cur.col).map_or(0.0, |(_, _, v)| v);
+                let lead = if cur.last_baseline.is_some() { lead + below } else { lead };
                 let (reference, model) = cjk_line_reference(line_glyphs);
                 let advance = if cur.last_baseline.is_some() { cur.aki_below.unwrap_or(lead) } else { lead };
                 let (mut x0, mut x1) = (col.x0, col.x1);
@@ -1510,7 +1517,8 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                                     for (j, nb) in breaks.iter().enumerate().skip(k + 1) {
                                         let (ns, ne) = (g0 + nb.start, g0 + nb.end);
                                         let lg = glyphs.get(ns..ne.max(ns)).unwrap_or_default();
-                                        let (_, _, _, nlead) = line_metrics(lg, &glyphs, ns, mark_leading, mark_chars.size, db, &mark_chars);
+                                        let (_, _, _, nlead, _) =
+                                            line_metrics(lg, &glyphs, ns, mark_leading, mark_chars.size, db, &mark_chars, &styles_tab, f.vertical);
                                         let nlead = match last_line_mark {
                                             Some(m) if j + 1 == breaks.len() => nlead.max(m),
                                             _ => nlead,
@@ -1734,6 +1742,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     sb.sub_lines += 1;
                     sb.part_lines += 1;
                 }
+                ruby_below_carry = Some((cur.fi, cur.col, below_grow));
                 ft.lines.push(Line {
                     column: cur.col as u32,
                     baseline,
@@ -2928,14 +2937,16 @@ fn line_metrics(
     base_size: f64,
     db: &ScopedFonts<'_>,
     base: &designcraft_doc::CharProps,
-) -> (f64, Tops, f64, f64) {
+    styles: &[RunStyle],
+    vertical: bool,
+) -> (f64, Tops, f64, f64, f64) {
     let src: &[Glyph] = if line.is_empty() { all.get(s..(s + 1).min(all.len())).unwrap_or(&[]) } else { line };
     let face = || db.face(&base.font_family, &base.font_style);
     if src.is_empty() {
         let face = face();
         let k = base_size / face.upem;
         let tops = Tops { typo_ascent: face.typo_ascent * k, cap: face.cap_height * k, xh: face.x_height * k, em: em_box_top(&face, base_size) };
-        return (face.ascent * k, tops, face.descent * k, base_leading);
+        return (face.ascent * k, tops, face.descent * k, base_leading, 0.0);
     }
     let mut asc: f64 = 0.0;
     let mut tops = Tops::default();
@@ -2966,7 +2977,30 @@ fn line_metrics(
         tops.typo_ascent = face.typo_ascent * base_size / face.upem;
         tops.em = em_box_top(&face, base_size);
     }
-    (asc, tops, desc, lead)
+    // Ruby Adjusts Leading: the line grows by the room its ruby needs, above and/or below the
+    // parent, so the ruby no longer runs into the line beside it. Vertical ruby is placed along the
+    // frame's across axis, so this leading rule belongs to horizontal text (as in the plan).
+    let mut below_room = 0.0;
+    if !vertical {
+        let (mut above, mut below) = (0.0_f64, 0.0_f64);
+        for g in src {
+            let Some(st) = styles.get(g.style as usize) else { continue };
+            if let Some(spec) = st.ruby_spec.as_ref().filter(|s| s.adjust_leading) {
+                let (a, b) = spec.leading_extent(g.size);
+                above = above.max(a);
+                below = below.max(b);
+            }
+        }
+        let grow_asc = (above - asc).max(0.0);
+        let grow_desc = (below - desc).max(0.0);
+        asc += grow_asc;
+        desc += grow_desc;
+        // The gap before this line grows with ruby above it; the room below is returned for the
+        // next line's gap (the caller carries it).
+        lead += grow_asc;
+        below_room = grow_desc;
+    }
+    (asc, tops, desc, lead, below_room)
 }
 
 /// How a line clears Jump Object wraps. The line occupies `[baseline − top, baseline]` (its leading,

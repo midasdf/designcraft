@@ -2154,6 +2154,60 @@ fn ruby_and_kenten_sit_over_their_text() {
     assert!((dot.x + dot.adv / 2.0 - (de.x + de.adv / 2.0)).abs() < 1.0 && dot.y < 0.0);
 }
 
+#[test]
+fn ruby_adjusts_leading_only_when_asked() {
+    let mut d = Document::new(&designcraft_doc::build::NewDocument::default());
+    let lid = d.default_layer();
+    let (_, sid) = d
+        .add_text_frame(
+            SpreadRef::Doc(0),
+            Rect::new(100.0, 100.0, 120.0, 600.0),
+            lid,
+            "漢字です。漢字です。漢字です。漢字です。",
+            ParaFormat::default(),
+        )
+        .unwrap();
+    let base = compose_story(&d, sid, &ComposeOptions::default());
+    let base_lines = &base.frames[0].lines;
+    assert!(base_lines.len() >= 2, "the text needs to wrap: {}", base_lines.len());
+    let (base_gap, base_asc0, base_asc1, base_desc0) =
+        (base_lines[1].baseline - base_lines[0].baseline, base_lines[0].ascent, base_lines[1].ascent, base_lines[0].descent);
+    let (first, second) = (base_lines[0].range.clone(), base_lines[1].range.clone());
+    // A reading far enough from the line to need room of its own, above or below it.
+    let ruby = |d: &mut Document, range: std::ops::Range<usize>, below: bool, on: bool| {
+        d.story_mut(sid).unwrap().format_chars(range, |f| {
+            f.over.ruby = Some("かんじ".into());
+            f.over.ruby_y_offset = Some(20.0);
+            f.over.ruby_adjust_leading = Some(on);
+            f.over.ruby_position =
+                Some(if below { designcraft_doc::ruby::RubyPosition::BelowLeft } else { designcraft_doc::ruby::RubyPosition::AboveRight });
+        });
+    };
+    // Ruby above the second line: that line's ascent and the gap from the first line grow.
+    ruby(&mut d, second.clone(), false, true);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &cs.frames[0].lines;
+    assert!(lines.len() >= 2);
+    assert!(lines[1].ascent > base_asc1 + 10.0, "ascent {} did not grow from {base_asc1}", lines[1].ascent);
+    let gap = lines[1].baseline - lines[0].baseline;
+    assert!(gap > base_gap + 10.0, "leading {gap} did not grow from {base_gap}");
+    assert!((lines[0].ascent - base_asc0).abs() < 1e-9, "the first line grew too: {}", lines[0].ascent);
+    // The same ruby with the setting off leaves every line metric as it was.
+    ruby(&mut d, second.clone(), false, false);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &cs.frames[0].lines;
+    assert!((lines[1].ascent - base_asc1).abs() < 1e-9, "{} {base_asc1}", lines[1].ascent);
+    assert!((lines[1].baseline - lines[0].baseline - base_gap).abs() < 1e-9);
+    // Ruby below the first line: that line's descent and the gap to the second line grow.
+    ruby(&mut d, first, true, true);
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let lines = &cs.frames[0].lines;
+    assert!(lines.len() >= 2);
+    assert!(lines[0].descent > base_desc0 + 10.0, "descent {} did not grow from {base_desc0}", lines[0].descent);
+    let gap = lines[1].baseline - lines[0].baseline;
+    assert!(gap > base_gap + 10.0, "leading {gap} did not grow from {base_gap}");
+}
+
 /// `text` on one line, composed plain and then with the ruby attributes `set` on `range`: the
 /// plain glyphs, and the ruby line (its ruby glyphs follow the text's) with its story.
 fn ruby_compose(text: &str, range: std::ops::Range<usize>, set: impl Fn(&mut designcraft_doc::CharAttrs)) -> (Vec<PlacedGlyph>, Line, ComposedStory) {

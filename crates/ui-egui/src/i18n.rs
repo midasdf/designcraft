@@ -4635,6 +4635,7 @@ mod tests {
     fn translates_known_strings_and_keeps_the_rest() {
         assert_eq!(tr("de", "File"), "Datei");
         assert_eq!(tr("ja", "Swatches"), "スウォッチ");
+        assert_eq!(tr("ja", "Ruby Adjusts Leading"), "ルビが行送りを調整");
         assert_eq!(tr("fr", "Something new"), "Something new");
         assert_eq!(tr("", "File"), "File");
         assert_eq!(tr("ar", "File"), "ملف");
