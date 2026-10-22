@@ -2199,6 +2199,9 @@ fn is_cjk_char(c: char) -> bool {
             | 0xF900..=0xFAFF
             | 0xFE30..=0xFE4F
             | 0xFF00..=0xFFEF
+            // Extension B 以降 (U+20000..)。breaker の Han の判定と同じ範囲にして、
+            // 補助面だけの段落でも禁則の指定が効くようにする
+            | 0x20000..=0x3FFFF
     )
 }
 

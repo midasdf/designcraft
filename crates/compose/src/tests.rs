@@ -5250,9 +5250,15 @@ fn mojikumi_kinsoku_push_in_and_push_out_select_different_legal_breaks() {
 /// A paragraph that can compress: the Mojikumi table gives its ideographs shrinkable space, so
 /// a line ending before a 禁則 boundary can be pulled in (追い込み) or pushed out (追い出し).
 fn kinsoku_push_pull_doc(kind: Option<&str>) -> (Document, StoryId) {
+    kinsoku_push_pull_doc_text("甲乙丙丁戊己庚辛", kind)
+}
+
+/// Same paragraph with a different body: used for the supplementary-plane ideographs, whose
+/// CJK classification must match the breaker's Han set.
+fn kinsoku_push_pull_doc_text(text: &str, kind: Option<&str>) -> (Document, StoryId) {
     use designcraft_doc::cjk::{MojikumiAki, MojikumiTable};
     let (mut d, sid, _) = doc_with(
-        "甲乙丙丁戊己庚辛",
+        text,
         Rect::new(0.0, 0.0, 45.0, 300.0),
         ParaAttrs {
             composer: Some(Composer::SingleLine),
@@ -5315,6 +5321,28 @@ fn push_out_only_leaves_the_line_end_uncompressed() {
     let (_, short) = first_line_end(&push_out_only);
     let line = all_lines(&push_out_only)[0];
     assert!(line.x1 - short > 0.5, "no compression: end {short} vs measure {}", line.x1);
+}
+
+#[test]
+fn supplementary_ideograph_paragraph_keeps_the_kinsoku_gate() {
+    // Extension B 以降の漢字 (U+20000..) は breaker では Han として扱われる。段落全体の CJK 判定
+    // (is_cjk_char) がそこを落とすと、補助面だけの段落で禁則の指定が効かなくなる。
+    // 補助面だけの本文でも、追い込みと追い出しで行末が変わる (指定が効いている) こと。
+    let first_end = |text: &str, kind: Option<&str>| {
+        let (d, sid) = kinsoku_push_pull_doc_text(text, kind);
+        first_line_end(&compose_story(&d, sid, &ComposeOptions::default())).0
+    };
+    let bmp = "甲乙丙丁戊己庚辛";
+    let sup = "\u{20000}\u{20001}\u{20002}\u{20003}\u{20004}\u{20005}\u{20006}\u{20007}";
+    // 対照: BMP の漢字だけの段落では、追い込みと追い出しで行末が変わる
+    assert_ne!(first_end(bmp, None), first_end(bmp, Some("KinsokuPushOutOnly")), "BMP の対照で禁則の指定が効いていない");
+    // 補助面だけの段落でも同じように効く (判定から漏れると、どちらも同じ行末になる)
+    assert_ne!(first_end(sup, None), first_end(sup, Some("KinsokuPushOutOnly")), "補助面だけの段落で禁則の指定が効いていない");
+    // 判定そのもの (Extension B の最初と最後、Ext G の終わり)
+    assert!(is_cjk_char('\u{20000}'));
+    assert!(is_cjk_char('\u{2A6DF}'));
+    assert!(is_cjk_char('\u{3FFFF}'));
+    assert!(!is_cjk_char('A'));
 }
 
 #[test]
