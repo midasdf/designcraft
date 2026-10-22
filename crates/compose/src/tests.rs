@@ -5348,6 +5348,11 @@ fn supplementary_ideograph_paragraph_keeps_the_kinsoku_gate() {
 /// Shape `text` as a one-paragraph story with the default font and styles: the glyph list the
 /// composition classifies before `split_drop_cap` and `prepend_label`.
 fn shape_for_script_test(text: &str) -> Vec<Glyph> {
+    shape_for_script_test_with(text, &SubstCtx::default())
+}
+
+/// Same, with text variables resolved through `sub`.
+fn shape_for_script_test_with(text: &str, sub: &SubstCtx) -> Vec<Glyph> {
     let db = designcraft_fonts::FontDb::global().scoped(0);
     let mut styles = Vec::new();
     let mut missing = std::collections::HashMap::new();
@@ -5362,7 +5367,7 @@ fn shape_for_script_test(text: &str) -> Vec<Glyph> {
         0..text.len(),
         &designcraft_doc::CharProps::default(),
         shape::TypeEnv { auto_leading: 1.2, adv: Default::default(), glyph_fallback: true },
-        &SubstCtx::default(),
+        sub,
         &mut table,
         &[],
         &[],
@@ -5396,6 +5401,19 @@ fn paragraph_script_counts_a_drop_cap_but_not_a_generated_label() {
     assert!(n > 0);
     // The label's glyphs are CJK, so a gate computed after prepend_label would flip the answer.
     assert!(glyphs.iter().take(n).any(|g| is_cjk_char(g.ch)));
+}
+
+#[test]
+fn paragraph_script_reads_a_text_variable_replacement() {
+    // A text variable's glyphs keep the source marker in `ch`; the paragraph shows the replacement,
+    // so a CJK replacement makes it CJK text even though no source character is.
+    let marker = designcraft_doc::vars::var_char(0).expect("variable 0");
+    let text = format!("{marker}abc");
+    let sub = SubstCtx { vars: Arc::new(vec!["漢字".into()]), ..Default::default() };
+    let glyphs = shape_for_script_test_with(&text, &sub);
+    assert!(!glyphs.iter().any(|g| is_cjk_char(g.ch)), "the source is only the marker and Latin text");
+    assert!(glyphs.iter().any(|g| g.generated_text.as_deref().is_some_and(|t| t.chars().any(is_cjk_char))));
+    assert!(paragraph_is_cjk(&glyphs), "the CJK replacement is the paragraph's text");
 }
 
 #[test]

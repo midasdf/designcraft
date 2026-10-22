@@ -2189,9 +2189,10 @@ fn spacing_for(pp: &ParaProps, base_size: f64, cjk: bool) -> Spacing {
 
 /// Whether the paragraph's own shaped glyphs contain CJK text, the gate for its 禁則 priority.
 /// Called before `split_drop_cap` and `prepend_label`, so a drop cap counts and generated list
-/// and story labels do not.
+/// and story labels do not. A text variable or page number keeps its marker in [`Glyph::ch`], so
+/// its replacement text is what the paragraph shows; inspect that too.
 fn paragraph_is_cjk(glyphs: &[Glyph]) -> bool {
-    glyphs.iter().any(|g| is_cjk_char(g.ch))
+    glyphs.iter().any(|g| is_cjk_char(g.ch) || g.generated_text.as_deref().is_some_and(|text| text.chars().any(is_cjk_char)))
 }
 
 /// Is `c` CJK text (the scripts the 禁則 line-start/line-end rules are about): ideographs, kana,
