@@ -5345,6 +5345,59 @@ fn supplementary_ideograph_paragraph_keeps_the_kinsoku_gate() {
     assert!(!is_cjk_char('A'));
 }
 
+/// Shape `text` as a one-paragraph story with the default font and styles: the glyph list the
+/// composition classifies before `split_drop_cap` and `prepend_label`.
+fn shape_for_script_test(text: &str) -> Vec<Glyph> {
+    let db = designcraft_fonts::FontDb::global().scoped(0);
+    let mut styles = Vec::new();
+    let mut missing = std::collections::HashMap::new();
+    let mut table = shape::StyleTable { styles: &mut styles, missing: &mut missing };
+    let mut story = Story::new(StoryId(0));
+    story.insert(0, text);
+    shape::shape_para(
+        &db,
+        &designcraft_doc::Styles::default(),
+        &story,
+        0,
+        0..text.len(),
+        &designcraft_doc::CharProps::default(),
+        shape::TypeEnv { auto_leading: 1.2, adv: Default::default(), glyph_fallback: true },
+        &SubstCtx::default(),
+        &mut table,
+        &[],
+        &[],
+        &[],
+        (0, ""),
+    )
+    .glyphs
+}
+
+#[test]
+fn paragraph_script_counts_a_drop_cap_but_not_a_generated_label() {
+    // The 禁則 gate reads the paragraph's own shaped glyphs. The drop cap has not been split off
+    // yet, so a CJK one still makes the paragraph CJK.
+    assert!(paragraph_is_cjk(&shape_for_script_test("漢abc")));
+    // A generated list label is prepended after the gate, so it is not part of the paragraph.
+    let mut glyphs = shape_for_script_test("abc");
+    assert!(!paragraph_is_cjk(&glyphs));
+    let db = designcraft_fonts::FontDb::global().scoped(0);
+    let mut styles = Vec::new();
+    let mut missing = std::collections::HashMap::new();
+    let mut table = shape::StyleTable { styles: &mut styles, missing: &mut missing };
+    let n = prepend_label(
+        &db,
+        &mut glyphs,
+        "第1章",
+        0,
+        &designcraft_doc::CharProps::default(),
+        shape::TypeEnv { auto_leading: 1.2, adv: Default::default(), glyph_fallback: true },
+        &mut table,
+    );
+    assert!(n > 0);
+    // The label's glyphs are CJK, so a gate computed after prepend_label would flip the answer.
+    assert!(glyphs.iter().take(n).any(|g| is_cjk_char(g.ch)));
+}
+
 #[test]
 fn kinsoku_priority_modes_map_to_breaker_policies() {
     let mut pp = ParaProps::default();

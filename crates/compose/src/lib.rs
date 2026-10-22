@@ -1037,6 +1037,10 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             &[],
             (drop_end, &pp.drop_cap_style),
         );
+        // The paragraph's script decides whether its 禁則 priority applies. Classify the shaped
+        // glyphs before split_drop_cap removes the drop cap and prepend_label adds the list
+        // label: a CJK drop cap is part of the paragraph, a generated label is not.
+        let cjk = paragraph_is_cjk(&sp.glyphs);
         // An empty paragraph has no glyphs of its own, so its only addressable character is its
         // hidden paragraph mark (the `\n` just past `prange.end`). A leading/size override applied
         // there (e.g. selecting the pilcrow to adjust line height) still needs to set the line's
@@ -1067,7 +1071,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
             let cols_here = &cols[cur.fi];
             let col = span_rect(cols_here, cols_here[cur.col.min(cols_here.len() - 1)], pp.span_columns);
             let col = SplitCfg::of(&pp).map_or(col, |c| c.sub_rect(col, 0));
-            let spacing = spacing_for(&pp, base_chars.size, sp.glyphs.iter().any(|g| is_cjk_char(g.ch)));
+            let spacing = spacing_for(&pp, base_chars.size, cjk);
             let mut lines: Vec<(std::ops::Range<usize>, String)> = Vec::new();
             for _ in 0..3 {
                 // The same drop cap, spacing, hyphenation and breaker as the layout below.
@@ -1220,7 +1224,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         mojikumi::apply(&mut glyphs, &doc.styles, &pp.mojikumi);
         let hyph_after = hyphenation_points(&story.text, &glyphs, &pp, &hyph_exceptions, &foreign_ranges(doc, story, prange.clone(), &base_chars));
         let base_size = base_chars.size;
-        let spacing = spacing_for(&pp, base_size, glyphs.iter().any(|g| is_cjk_char(g.ch)));
+        let spacing = spacing_for(&pp, base_size, cjk);
         // An empty paragraph takes its height from its paragraph mark's character format.
         let mark_chars = if glyphs.is_empty() {
             std::borrow::Cow::Owned(doc.styles.resolve_char(&base_chars, story.char_format_of(prange.start)))
@@ -2181,6 +2185,13 @@ fn spacing_for(pp: &ParaProps, base_size: f64, cjk: bool) -> Spacing {
             _ => 0,
         },
     }
+}
+
+/// Whether the paragraph's own shaped glyphs contain CJK text, the gate for its 禁則 priority.
+/// Called before `split_drop_cap` and `prepend_label`, so a drop cap counts and generated list
+/// and story labels do not.
+fn paragraph_is_cjk(glyphs: &[Glyph]) -> bool {
+    glyphs.iter().any(|g| is_cjk_char(g.ch))
 }
 
 /// Is `c` CJK text (the scripts the 禁則 line-start/line-end rules are about): ideographs, kana,
