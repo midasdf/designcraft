@@ -798,9 +798,6 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         .zip(&cols)
         .map(|(f, columns)| FrameText { frame: f.id, vertical: f.vertical, columns: columns.clone(), ..Default::default() })
         .collect();
-    // Ruby Adjusts Leading below the last placed line, for the gap to the next line: its frame and
-    // column, and the room needed; an entry for another column never matches.
-    let mut ruby_below_carry: Option<(usize, usize, f64)> = None;
     let mut cur = Cursor {
         fi: 0,
         col: 0,
@@ -808,6 +805,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
         last_descent: 0.0,
         last_reference: 0.0,
         aki_below: None,
+        ruby_below: None,
         pending: 0.0,
         pi: 0,
         band: Band::default(),
@@ -1463,11 +1461,15 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     Some(m) if k + 1 == breaks.len() => lead.max(m),
                     _ => lead,
                 };
-                // Ruby set below the previous line takes its room from the gap to this line.
-                let below = ruby_below_carry.filter(|(fi, col, _)| *fi == cur.fi && *col == cur.col).map_or(0.0, |(_, _, v)| v);
-                let lead = if cur.last_baseline.is_some() { lead + below } else { lead };
+                // Ruby set below the previous line takes its room from the gap to this line, on top
+                // of either leading model's advance.
+                let below = cur.ruby_below.filter(|(fi, col, _)| *fi == cur.fi && *col == cur.col).map_or(0.0, |(_, _, v)| v);
                 let (reference, model) = cjk_line_reference(line_glyphs);
-                let advance = if cur.last_baseline.is_some() { cur.aki_below.unwrap_or(lead) } else { lead };
+                let base = if cur.last_baseline.is_some() { cur.aki_below.unwrap_or(lead) } else { lead };
+                let advance = if cur.last_baseline.is_some() { base + below } else { base };
+                // The line's stored leading grows by the room the line above's below ruby needs (the
+                // above ruby's room is already in `lead`).
+                let line_lead = if cur.last_baseline.is_some() { lead + below } else { lead };
                 let (mut x0, mut x1) = (col.x0, col.x1);
                 // A wrap segment that can't hold the line's first word whole stays empty and the
                 // text goes on in the next segment or line (a word wider than the column is split
@@ -1511,22 +1513,26 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                                 let r = grid::reference_offset(line_glyphs, pp.grid_reference);
                                 let block = n > 0 && pp.paragraph_gyoudori && line_no == 0;
                                 let span = if block {
-                                    // From this line's reference point to the paragraph's last line's.
+                                    // From this line's reference point to the paragraph's last line's:
+                                    // each gap is the line above's below-ruby room on top of either
+                                    // leading model's advance.
                                     let aki_below = |model, lead| (model == designcraft_doc::cjk::LeadingModel::AkiBelow).then_some(lead);
-                                    let (mut down, mut prev, mut prev_aki, mut last_r) = (0.0, reference, aki_below(model, lead), r);
+                                    let (mut down, mut prev, mut prev_aki, mut last_r, mut prev_below) =
+                                        (0.0, reference, aki_below(model, lead), r, below_grow);
                                     for (j, nb) in breaks.iter().enumerate().skip(k + 1) {
                                         let (ns, ne) = (g0 + nb.start, g0 + nb.end);
                                         let lg = glyphs.get(ns..ne.max(ns)).unwrap_or_default();
-                                        let (_, _, _, nlead, _) =
+                                        let (_, _, _, nlead, nbelow) =
                                             line_metrics(lg, &glyphs, ns, mark_leading, mark_chars.size, db, &mark_chars, &styles_tab, f.vertical);
                                         let nlead = match last_line_mark {
                                             Some(m) if j + 1 == breaks.len() => nlead.max(m),
                                             _ => nlead,
                                         };
                                         let (nref, nmodel) = cjk_line_reference(lg);
-                                        down += prev_aki.unwrap_or(nlead) + prev - nref;
+                                        down += prev_aki.unwrap_or(nlead) + prev_below + prev - nref;
                                         prev = nref;
                                         prev_aki = aki_below(nmodel, nlead);
+                                        prev_below = nbelow;
                                         last_r = grid::reference_offset(lg, pp.grid_reference);
                                     }
                                     (down + last_r - r).max(0.0)
@@ -1742,7 +1748,14 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     sb.sub_lines += 1;
                     sb.part_lines += 1;
                 }
-                ruby_below_carry = Some((cur.fi, cur.col, below_grow));
+                // Segments that share a baseline pool their below-ruby room: the next row clears
+                // the largest room any segment of the row needs.
+                let same_row = cur.last_baseline == Some(baseline);
+                if same_row && let Some((fi, col, v)) = cur.ruby_below.filter(|(fi, col, _)| *fi == cur.fi && *col == cur.col) {
+                    cur.ruby_below = Some((fi, col, v.max(below_grow)));
+                } else {
+                    cur.ruby_below = Some((cur.fi, cur.col, below_grow));
+                }
                 ft.lines.push(Line {
                     column: cur.col as u32,
                     baseline,
@@ -1750,7 +1763,7 @@ fn compose_with_db(doc: &Document, story: &Story, frames: &[FrameSpec], opts: &C
                     x1,
                     ascent: asc,
                     descent: desc,
-                    leading: lead,
+                    leading: line_lead,
                     range: range_start..range_end,
                     para: pi,
                     glyphs: placed,
@@ -2464,6 +2477,10 @@ struct Cursor {
     /// The line above's leading when it sets the advance to the next line: under the Japanese
     /// composers' Aki Below model the leading is the space below its line.
     aki_below: Option<f64>,
+    /// Ruby Adjusts Leading below the last placed line, for the gap to the next line: its frame
+    /// and column, and the room needed; an entry for another column never matches. Kept with the
+    /// rest of the cursor state so a rewind restores the room of the line that stays.
+    ruby_below: Option<(usize, usize, f64)>,
     /// Space before/after waiting to be added to the next line.
     pending: f64,
     /// The paragraph being laid.
@@ -2534,6 +2551,7 @@ struct Resume {
     last_descent: f64,
     last_reference: f64,
     aki_below: Option<f64>,
+    ruby_below: Option<(usize, usize, f64)>,
     pending: f64,
 }
 
@@ -2713,6 +2731,7 @@ impl Cursor {
             last_descent: self.last_descent,
             last_reference: self.last_reference,
             aki_below: self.aki_below,
+            ruby_below: self.ruby_below,
             pending: self.pending,
         }
     }
@@ -2735,6 +2754,7 @@ impl Cursor {
         self.last_descent = r.last_descent;
         self.last_reference = r.last_reference;
         self.aki_below = r.aki_below;
+        self.ruby_below = r.ruby_below;
         self.pending = r.pending;
     }
     /// Within a split block, the next sub-column when there's one to go to.
@@ -2753,6 +2773,9 @@ impl Cursor {
     }
     /// Start the current column at the top of the band.
     fn resume(&mut self) {
+        // A new column's first line is measured from the column top, not from a line in another
+        // column, so no ruby room is carried into it.
+        self.ruby_below = None;
         match self.band.above {
             Some(a) => {
                 self.last_baseline = Some(a.baseline);
