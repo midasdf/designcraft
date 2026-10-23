@@ -2280,6 +2280,32 @@ fn ruby_adjusts_leading_under_aki_below() {
     assert!(gap > base_gap + 10.0, "leading {gap} did not grow from {base_gap}");
 }
 
+#[test]
+fn ascent_first_baseline_makes_room_for_above_ruby() {
+    use designcraft_doc::FirstBaseline;
+    let (mut d, sid, fid) = doc_with("漢字です", Rect::new(0.0, 0.0, 300.0, 200.0), ParaAttrs::default());
+    let tf = d.item_mut(fid).unwrap().text_frame_mut().unwrap();
+    tf.options.inset = [10.0, 10.0, 10.0, 10.0];
+    tf.options.first_baseline = FirstBaseline::Ascent;
+    let base = compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0].baseline;
+    // Ruby far enough above the parent to outgrow the typographic ascender the first baseline
+    // otherwise sits at.
+    d.story_mut(sid).unwrap().format_chars(0.."漢字".len(), |f| {
+        f.over.ruby = Some("かんじ".into());
+        f.over.ruby_y_offset = Some(20.0);
+        f.over.ruby_adjust_leading = Some(true);
+        f.over.ruby_position = Some(designcraft_doc::ruby::RubyPosition::AboveRight);
+    });
+    let cs = compose_story(&d, sid, &ComposeOptions::default());
+    let line = &cs.frames[0].lines[0];
+    assert!(line.baseline > base + 10.0, "the first baseline did not move down for its ruby: {} {base}", line.baseline);
+    assert!(line.baseline - line.ascent >= 10.0 - 0.01, "the ruby top {} is above the column top 10", line.baseline - line.ascent);
+    // With the setting off the first baseline stays where it was.
+    d.story_mut(sid).unwrap().format_chars(0.."漢字".len(), |f| f.over.ruby_adjust_leading = Some(false));
+    let line = &compose_story(&d, sid, &ComposeOptions::default()).frames[0].lines[0];
+    assert!((line.baseline - base).abs() < 1e-9, "the first baseline moved with the setting off: {} {base}", line.baseline);
+}
+
 /// `text` on one line, composed plain and then with the ruby attributes `set` on `range`: the
 /// plain glyphs, and the ruby line (its ruby glyphs follow the text's) with its story.
 fn ruby_compose(text: &str, range: std::ops::Range<usize>, set: impl Fn(&mut designcraft_doc::CharAttrs)) -> (Vec<PlacedGlyph>, Line, ComposedStory) {

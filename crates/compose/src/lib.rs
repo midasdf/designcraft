@@ -3019,6 +3019,12 @@ fn line_metrics(
         let grow_desc = (below - desc).max(0.0);
         asc += grow_asc;
         desc += grow_desc;
+        // The Ascent first baseline sits at the tallest typographic ascender; above ruby now
+        // reaches higher, so the first baseline has to move down with it (the other first-baseline
+        // kinds keep their own heights).
+        if grow_asc > 0.0 {
+            tops.typo_ascent = tops.typo_ascent.max(asc);
+        }
         // The gap before this line grows with ruby above it; the room below is returned for the
         // next line's gap (the caller carries it).
         lead += grow_asc;
