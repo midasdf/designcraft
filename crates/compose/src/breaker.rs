@@ -48,6 +48,9 @@ pub struct Spacing {
     pub hyph_zone: f64,
     /// Optical margin alignment: punctuation hangs outside the measure (counted as extra width).
     pub optical: bool,
+    /// The type size the hang amounts are set for (Story ▸ Optical Margin Alignment's size);
+    /// `None`: each glyph's own size, so the hang is [`hang`]'s proportion of its advance.
+    pub optical_size: Option<f64>,
     /// Korean text breaks between syllables instead of at spaces.
     pub korean_char_breaks: bool,
     /// JIS X 4051 禁則処理 type: 0: minimum adjustment (調整量優先); 1: push in first (追い込み
@@ -76,6 +79,7 @@ impl Default for Spacing {
             ragged_stretch: 24.0,
             hyph_zone: 0.0,
             optical: false,
+            optical_size: None,
             korean_char_breaks: false,
             kinsoku_priority: 1,
             kinsoku_cjk: false,
@@ -305,7 +309,7 @@ fn cjk_break(a: &Glyph, b: &Glyph, sp: &Spacing) -> bool {
 }
 
 pub fn is_forced(c: char) -> bool {
-    use designcraft_doc::story::*;
+    use designcraft_doc::story::{FORCED_LINE_BREAK, is_break_char};
     c == FORCED_LINE_BREAK || is_break_char(c)
 }
 
@@ -328,16 +332,32 @@ pub fn hang(c: char) -> (f64, f64) {
     }
 }
 
-fn hang_left(g: &Glyph) -> f64 {
-    hang(g.ch).0 * g.adv
+/// How much more than [`hang`]'s proportions `g` hangs: the hang is set for
+/// [`Spacing::optical_size`] and grows with it, relative to the glyph's own size.
+pub(crate) fn optical_scale(g: &Glyph, sp: &Spacing) -> f64 {
+    match sp.optical_size {
+        Some(s) if s.is_finite() && g.size.is_finite() && g.size > 0.0 => s / g.size,
+        _ => 1.0,
+    }
+}
+
+/// Optical hang of `g` at the start of a line (0 without optical margin alignment).
+pub(crate) fn hang_left(g: &Glyph, sp: &Spacing) -> f64 {
+    if sp.optical { hang(g.ch).0 * g.adv * optical_scale(g, sp) } else { 0.0 }
+}
+
+/// Optical hang of `g` at the end of a line (0 without optical margin alignment).
+pub(crate) fn hang_right(g: &Glyph, sp: &Spacing) -> f64 {
+    if sp.optical { hang(g.ch).1 * g.adv * optical_scale(g, sp) } else { 0.0 }
 }
 
 fn right_hang(g: &Glyph, sp: &Spacing) -> f64 {
-    g.cjk_hang.max(if sp.optical { hang_right(g) } else { 0.0 }) - g.moji.end
+    g.cjk_hang.max(hang_right(g, sp)) - g.moji.end
 }
 
-fn hang_right(g: &Glyph) -> f64 {
-    hang(g.ch).1 * g.adv
+/// The part of a hyphen after `g` (of width `hw`) that hangs past the line's end.
+fn hyphen_hang(g: &Glyph, hw: f64, sp: &Spacing) -> f64 {
+    if sp.optical { hw * hang('-').1 * optical_scale(g, sp) } else { 0.0 }
 }
 
 /// Advance of the hyphen glyph that would follow `g` (cached per face).
@@ -438,15 +458,13 @@ fn items(glyphs: &[Glyph], hyph_after: &[bool], emergency_after: &[bool], sp: &S
             let mut p = Item::penalty(hw, sp.hyphen_penalty, true);
             p.auto = true;
             p.zone_from = last_space;
-            if sp.optical {
-                p.hang = hw * hang('-').1;
-            }
+            p.hang = hyphen_hang(g, hw, sp);
             push_inword(&mut it, &mut ig, p, i + 1, sp);
             continue;
         }
         let (st, sh) = sp.box_elastic(g);
         let mut bx = Item::boxed(g.adv, st, sh);
-        bx.hang = (if sp.optical { hang_left(g) } else { 0.0 }) - g.moji.start;
+        bx.hang = hang_left(g, sp) - g.moji.start;
         bx.start_elastic = crate::mojikumi::start_elastic(g, sp.justify, !sp.push_out_only());
         it.push(bx);
         ig.push(i);
@@ -467,9 +485,7 @@ fn items(glyphs: &[Glyph], hyph_after: &[bool], emergency_after: &[bool], sp: &S
                 let mut p = Item::penalty(hw, sp.hyphen_penalty, true);
                 p.auto = true;
                 p.zone_from = last_space;
-                if sp.optical {
-                    p.hang = hw * hang('-').1;
-                }
+                p.hang = hyphen_hang(g, hw, sp);
                 push_inword(&mut it, &mut ig, p, i + 1, sp);
             } else if emergency_after.get(i) == Some(&true) {
                 let mut p = Item::penalty(0.0, EMERGENCY_PENALTY, false);
@@ -894,7 +910,7 @@ pub fn greedy(
     let may_hyphenate = |hyphens: u32| sp.hyphen_limit == 0 || hyphens < sp.hyphen_limit;
     while start < n {
         let w = width(line).max(1.0);
-        let mut x = (if sp.optical { -hang_left(&glyphs[start]) } else { 0.0 }) + glyphs[start].moji.start;
+        let mut x = -hang_left(&glyphs[start], sp) + glyphs[start].moji.start;
         let mut shrink = crate::mojikumi::start_elastic(&glyphs[start], sp.justify, !sp.push_out_only())[1];
         let mut last_natural: Option<(usize, bool)> = None;
         let mut last_ok: Option<(usize, bool)> = None; // (break position = end glyph, hyphen)
@@ -958,7 +974,8 @@ pub fn greedy(
                         last_natural = last_ok;
                     }
                 } else if hyph_after[i] && may_hyphenate(hyphens) {
-                    let hy = hyphen_width(g, &mut hy_cache) * if sp.optical { 1.0 - hang('-').1 } else { 1.0 };
+                    let hw = hyphen_width(g, &mut hy_cache);
+                    let hy = (hw - hyphen_hang(g, hw, sp)).max(0.0);
                     if x + hy <= w + shrink + FIT_EPS {
                         last_ok = Some((i + 1, true));
                     }
