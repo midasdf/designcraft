@@ -144,6 +144,7 @@ impl Document {
         };
         let mut d = Document {
             title: nd.title.clone(),
+            file_info: Default::default(),
             settings,
             spreads: vec![],
             parents: vec![],
