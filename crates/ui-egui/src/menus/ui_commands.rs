@@ -1,4 +1,4 @@
-use super::*;
+use super::DesignApp;
 
 /// Menu and Quick Apply entries that only CJK typesetting uses: hidden unless
 /// [`crate::cjk_features`]. The commands still run from scripts, the control channel and MCP.
@@ -232,6 +232,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.textThreads", "Show/Hide Text Threads", Some("Cmd+Alt+Y"), "{}"),
     ("view.hiddenCharacters", "Show Hidden Characters", Some("Cmd+Alt+I"), "{}"),
     ("view.taggedFrames", "Show/Hide Tagged Frames", None, "{} — XML-tagged frames outlined in their tag colour"),
+    (
+        "view.storyEditorDepthRuler",
+        "Show/Hide Depth Ruler",
+        None,
+        "{} — the Story Editor's vertical ruler of how deep the text reaches in its frames",
+    ),
     ("window.hidePanels", "Show/Hide Panels", Some("Tab"), "{} — every panel, the Tools panel included"),
     ("window.hidePanelsExceptTools", "Show/Hide Panels Except Tools", Some("Shift+Tab"), "{}"),
     ("window.nextDocument", "Next Document", Some("Cmd+F6"), "{}"),
